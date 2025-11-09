@@ -3,7 +3,9 @@ import pandas as pd
 import openpyxl
 from data_loader import load_all_player_data
 from pizza_charts import defensive_pizza_chart, offensive_pizza_chart
+from physical_pizza_charts import physical_pizza_chart
 from league_team_charts import league_strength, team_position
+from physical_compare_JPL import physical_compare_JPL
 
 
 # --- Pagina instellingen ---
@@ -31,6 +33,8 @@ def apply_filters(df, **filters):
             low, high = filter_value
             if 'matchShare_x' in result.columns:
                 result = result[(result['matchShare_x'] >= low) & (result['matchShare_x'] <= high)]
+        elif filter_name == 'leg' and filter_value:
+            result = result[result['leg'] == filter_value]          
         elif filter_name == 'percentiles':
             for col, (low, high) in filter_value.items():
                 if col in result.columns:
@@ -112,6 +116,24 @@ percentile_groups = {
     "Set-Pieces": {
         "SHOT_XG_AT_PHASE_SET_PIECE_percentile": "Set-Piece xG",
         "DEFENSIVE_TOUCHES_AT_PHASE_SET_PIECE_percentile": "Defensive Touches at Set-Pieces"
+    },
+    "Physical": {
+        'psv99_top5_percentile': "Max. Sprint Speed",
+        'TD_per_90_percentile': "Total Distance",
+        'RD_per_90_percentile': "Total Running Distance",
+        'HID_per_90_percentile': "High Intensity Distance",
+        'HI_count_per_90_percentile': "High Intensity Count",
+        'SPRD_per_90_percentile': "Sprint Distance",
+        'SPR_count_per_90_percentile': "Sprint Count",
+        'acc_count_per_90_percentile': "Accelerations",
+        'dec_count_per_90_percentile': "Decelerations"
+    },
+    "Overall": {
+        'OFFENSIVE_TOUCHES_percentile': 'Offensive Involvement',
+        'defensive_involvement': 'Defensive Involvement',
+        'defensive_match': "Defensive Match",
+        'offensive_match': "Offensive Match",
+        'essevee_match': 'Profile Match'
     }
 }
 
@@ -153,6 +175,15 @@ position = st.sidebar.selectbox(
     options=[''] + available_positions,
     index=0,
     key='filter_position'
+) or ''
+
+# Foot filter
+available_legs = get_available_options(df_all, 'leg')
+leg = st.sidebar.selectbox(
+    "Preferred Foot",
+    options=[''] + available_legs,
+    index=0,
+    key='filter_leg'
 ) or ''
 
 # League Strength filter
@@ -219,21 +250,28 @@ active_groups = st.sidebar.multiselect(
 
 percentile_filters = {}
 
+
 for group_name in active_groups:
     with st.sidebar.expander(f"{group_name} ({len(percentile_groups[group_name])} filters)"):
         for col, label in percentile_groups[group_name].items():
             if col in df_all.columns:
                 valid_values = df_all[col].dropna()
                 if not valid_values.empty:
-                    min_val, max_val = int(valid_values.min()), int(valid_values.max())
+                    # Specifieke slider range voor deze 3 kolommen
+                    if col in ['essevee_match', 'defensive_match', 'offensive_match']:
+                        min_val, max_val = 0, 10
+                    else:
+                        min_val, max_val = 0, 100
                     default = st.session_state.get(f"filter_{col}", (min_val, max_val))
                     percentile_filters[col] = st.slider(
                         label,
-                        0, 100,
+                        min_val, max_val,
                         default,
                         key=f"filter_{col}",
                         help=f"Filter op {label} percentile"
                     )
+
+
 
 # --- Finale gefilterde data ---
 current_filters = {
@@ -241,6 +279,7 @@ current_filters = {
     'squadName': team,
     'playerName': selected_players,  # Nu een list
     'position': position,
+    'leg': leg,
     'age_range': age_range,
     'nineties_range': nineties_range,
     'league_strength': league_strength_range,
@@ -284,7 +323,7 @@ if len(final_df) > 0:
     final_df["Country"] = final_df["playerCountry"]
 
     display_df = final_df[['season', 'playerName', "Country", 'age', 'squadName',
-                           'competitionName', 'value', 'position', "90's"]].drop_duplicates().reset_index(drop=True)
+                           'competitionName', 'value', 'position', 'essevee_match', "90's"]].drop_duplicates().reset_index(drop=True)
     display_df = display_df.sort_values(['playerName'])
 
     # Hernoem kolommen
@@ -295,7 +334,8 @@ if len(final_df) > 0:
         'playerName': 'Player Name',
         'season': 'Season',
         'age': 'Age',
-        'position': 'Position'  
+        'position': 'Position',
+        'essevee_match': 'Profile Match'
     })
     display_df["League Strength"] = display_df["League Strength"].astype(float).round(2)
 
@@ -352,7 +392,20 @@ if len(final_df) > 0:
 
         with col3:
             st.subheader("🏃 Physical")
-            st.info("Physical chart komt binnenkort! 🚀")
+            fig_phy = physical_pizza_chart(final_df, selected_player_data['playerName'],
+                                            selected_player_data['position'], selected_player_data['season'],
+                                            selected_player_data['squadName'])
+            st.pyplot(fig_phy, use_container_width=True)
+
+            st.subheader("📊 Physical vs JPL")
+            fig_compare = physical_compare_JPL(
+                final_df,
+                selected_player_data['playerName'],
+                selected_player_data['position'],
+                selected_player_data['season'],
+                selected_player_data['squadName']
+            )
+            st.pyplot(fig_compare, use_container_width=True)
 
 else:
     st.warning("🚫 Geen spelers voldoen aan de huidige filters")
